@@ -35,6 +35,11 @@ ALL_KNOWN_TAGS = [
     "closed/won",
     "discovery call booked",
     "happy customer",
+    "lead",
+    "mql",
+    "opportunity",
+    "project work",
+    "proposal presented",
     "qualified - but not a fit",
     "qualified company",
     "qualified lead",
@@ -50,17 +55,22 @@ WINS_FOCUS_TAGS = [
     "appointment sat",
     "discovery call booked",
     "closed/won",
+    "proposal presented",
+    "qualified - but not a fit",
+    "opportunity",
+    "mql",
+    "lead",
+    "closed/lost",
+    "too small",
+    "project work",
 ]
 
 PIPELINE_TAGS = WINS_FOCUS_TAGS  # same set defines "Qualified Pipeline"
 
 EXCLUDED_IN_WINS = [
     "spam/bot",
-    "closed/lost",
-    "too small",
     "residential",
     "unsure how to score",
-    "qualified - but not a fit",
 ]
 
 # Chart colors
