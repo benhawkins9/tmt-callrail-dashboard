@@ -23,6 +23,9 @@ from db import (
     load_conversion_quality_totals,
     load_conversion_quality_by_month,
     load_monthly_qualified_by_type,
+    load_ai_leads_monthly,
+    load_ai_leads_by_platform,
+    load_ai_leads_by_company,
 )
 from config import DATE_FROM
 
@@ -114,6 +117,7 @@ SOURCE_COLOR_MAP = {
     "Offline Marketing":  "#f43f5e",   # rose — offline tracking numbers, print, SDR
     "Social Media":       PINK,        # #ec4899
     "Email":              LIGHT_GREEN, # #86efac
+    "AI Search":          "#8b5cf6",   # violet
     "Other":              "#6b7280",   # gray
 }
 
@@ -213,6 +217,18 @@ def _all_tags():
 
 
 @st.cache_data(show_spinner=False)
+def _ai_leads_monthly(date_from, date_to, tags_tuple):
+    return load_ai_leads_monthly(date_from, date_to, list(tags_tuple))
+
+@st.cache_data(show_spinner=False)
+def _ai_leads_by_platform(date_from, date_to):
+    return load_ai_leads_by_platform(date_from, date_to)
+
+@st.cache_data(show_spinner=False)
+def _ai_leads_by_company(date_from, date_to, tags_tuple):
+    return load_ai_leads_by_company(date_from, date_to, list(tags_tuple))
+
+@st.cache_data(show_spinner=False)
 def _monthly_qualified_by_type(date_from, date_to, tags_tuple):
     return load_monthly_qualified_by_type(date_from, date_to, list(tags_tuple))
 
@@ -240,6 +256,9 @@ def clear_cache():
     _source_breakdown.clear()
     _scorecard.clear()
     _all_tags.clear()
+    _ai_leads_monthly.clear()
+    _ai_leads_by_platform.clear()
+    _ai_leads_by_company.clear()
     _monthly_qualified_by_type.clear()
     _conversion_quality_totals.clear()
     _conversion_quality_by_month.clear()
@@ -1002,6 +1021,119 @@ if _dur_rows:
     st.plotly_chart(fig_dur, use_container_width=True)
 else:
     st.info("No call duration data available.")
+
+st.markdown("---")
+
+# ── AI Search Leads ────────────────────────────────────────────────────────────
+
+st.markdown("## AI Search Leads")
+st.caption("Contacts referred by ChatGPT, SearchGPT, Perplexity, Gemini, Copilot, and other LLM-powered search engines.")
+
+_ai_tags = pipeline_tags_tuple if pipeline_tags_tuple else tuple(sorted(PIPELINE_TAGS))
+
+_ai_monthly   = _ai_leads_monthly(DATE_FROM, TODAY, _ai_tags)
+_ai_platforms = _ai_leads_by_platform(DATE_FROM, TODAY)
+_ai_companies = _ai_leads_by_company(DATE_FROM, TODAY, _ai_tags)
+
+_ai_total     = sum(r["total"]     for r in _ai_monthly)
+_ai_qualified = sum(r["qualified"] for r in _ai_monthly)
+_ai_qual_rate = (_ai_qualified / _ai_total * 100) if _ai_total else 0.0
+
+if _ai_total == 0:
+    st.info("No AI Search leads found yet. These will appear after contacts arrive via ChatGPT, Perplexity, SearchGPT, or similar platforms.")
+else:
+    # Scorecard row
+    _a1, _a2, _a3 = st.columns(3)
+    with _a1:
+        st.metric("Total AI Search Contacts", f"{_ai_total:,}",
+                  help="All contacts (calls + forms) referred by an AI search engine")
+    with _a2:
+        st.metric("Qualified AI Leads", f"{_ai_qualified:,}",
+                  help="AI search contacts with at least one pipeline tag")
+    with _a3:
+        st.metric("AI Lead Conversion Rate", f"{_ai_qual_rate:.1f}%",
+                  help="Qualified AI leads / total AI contacts")
+
+    # Platform breakdown + monthly trend side by side
+    _ai_col1, _ai_col2 = st.columns([1, 2])
+
+    with _ai_col1:
+        st.markdown("**By Platform**")
+        if _ai_platforms:
+            _PLATFORM_COLORS = {
+                "ChatGPT":    "#10a37f",   # OpenAI green
+                "SearchGPT":  "#0ea5e9",   # sky blue
+                "Perplexity": "#7c3aed",   # perplexity purple
+                "Gemini":     "#4285f4",   # Google blue
+                "Copilot":    "#0078d4",   # Microsoft blue
+                "Other AI":   "#6b7280",
+            }
+            _df_plat = pd.DataFrame(_ai_platforms)
+            fig_plat = go.Figure(go.Pie(
+                labels=_df_plat["platform"],
+                values=_df_plat["count"],
+                hole=0.45,
+                marker=dict(colors=[_PLATFORM_COLORS.get(p, "#6b7280") for p in _df_plat["platform"]]),
+                textinfo="label+percent",
+                textfont=dict(color="#f1f5f9", size=11),
+                hovertemplate="%{label}: %{value:,} (%{percent})<extra></extra>",
+            ))
+            fig_plat.update_layout(
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#f1f5f9"),
+                showlegend=False,
+                margin=dict(t=20, b=10, l=10, r=10),
+                height=280,
+            )
+            st.plotly_chart(fig_plat, use_container_width=True)
+
+    with _ai_col2:
+        st.markdown("**Monthly Trend**")
+        if _ai_monthly:
+            _df_ai = pd.DataFrame(_ai_monthly)
+            fig_ai = go.Figure()
+            fig_ai.add_trace(go.Bar(
+                name="Total AI Contacts",
+                x=_df_ai["month"],
+                y=_df_ai["total"],
+                marker_color="rgba(139,92,246,0.35)",
+                hovertemplate="Total: %{y}<extra></extra>",
+            ))
+            fig_ai.add_trace(go.Scatter(
+                name="Qualified AI Leads",
+                x=_df_ai["month"],
+                y=_df_ai["qualified"],
+                mode="lines+markers",
+                line=dict(color="#8b5cf6", width=3),
+                marker=dict(size=7, color="#8b5cf6"),
+                hovertemplate="Qualified: %{y}<extra></extra>",
+            ))
+            fig_ai.update_layout(
+                xaxis_title="Month",
+                yaxis_title="Contacts",
+                **{k: v for k, v in PLOT_LAYOUT.items() if k not in ("xaxis", "yaxis", "height", "legend")},
+                xaxis=dict(gridcolor="#334155", linecolor="#475569", tickfont=dict(color="#94a3b8")),
+                yaxis=dict(gridcolor="#334155", linecolor="#475569", tickfont=dict(color="#94a3b8")),
+                height=280,
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0,
+                            bgcolor="rgba(0,0,0,0)", font=dict(color="#f1f5f9")),
+            )
+            st.plotly_chart(fig_ai, use_container_width=True)
+
+    # Per-company table
+    if _ai_companies:
+        st.markdown("**By Company**")
+        _df_co = pd.DataFrame(_ai_companies)
+        _df_co["Conversion Rate"] = _df_co.apply(
+            lambda r: f"{r['qualified']/r['total']*100:.0f}%" if r["total"] else "—", axis=1
+        )
+        _df_co = _df_co.rename(columns={"company": "Company", "total": "Total", "qualified": "Qualified"})
+        st.dataframe(
+            _df_co[["Company", "Total", "Qualified", "Conversion Rate"]],
+            use_container_width=True,
+            hide_index=True,
+        )
 
 st.markdown("---")
 

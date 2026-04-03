@@ -434,13 +434,36 @@ def load_monthly_by_tag(date_from: str, date_to: str, tags: list[str]) -> list[d
 #   utm_medium=direct / offline (non-GMB)      → "Offline Marketing"
 #   anything else                              → NULL (excluded from charts)
 
+_AI_SOURCES = (
+    "'chatgpt.com','searchgpt','chatgpt','openai','perplexity',"
+    "'gemini','copilot','you.com','phind','claude.ai','grok'"
+)
+
+def _ai_filter(tbl: str) -> str:
+    """SQL boolean expression that is true for AI-search-referred contacts."""
+    us = f"LOWER(COALESCE({tbl}.utm_source,''))"
+    rd = f"LOWER(COALESCE({tbl}.referrer_domain,''))"
+    return (
+        f"({us} IN ({_AI_SOURCES})"
+        f" OR {rd} LIKE '%chatgpt.com%'"
+        f" OR {rd} LIKE '%searchgpt%'"
+        f" OR {rd} LIKE '%perplexity.ai%'"
+        f" OR {rd} LIKE '%gemini.google%'"
+        f" OR {rd} LIKE '%copilot.microsoft%')"
+    )
+
+
 def _src(tbl: str) -> str:
     """SQL CASE expression returning a clean lead-source label for table alias `tbl`."""
     sn = f"LOWER(COALESCE({tbl}.source_name,''))"
     us = f"LOWER(COALESCE({tbl}.utm_source,''))"
     um = f"LOWER(COALESCE({tbl}.utm_medium,''))"
+    rd = f"LOWER(COALESCE({tbl}.referrer_domain,''))"
+    ai = _ai_filter(tbl)
     return (
         f"CASE"
+        # AI Search must come before Referral (chatgpt.com was previously in Referral list)
+        f" WHEN {ai} THEN 'AI Search'"
         f" WHEN {sn} LIKE '%google my business%' OR {sn} LIKE '%google business profile%'"
         f"   OR {sn} LIKE '%gbp%' OR {sn} LIKE '%gmb%'"
         f"   OR {us} IN ('googlemybusiness','gmb') OR {um} = 'gmb'"
@@ -454,7 +477,7 @@ def _src(tbl: str) -> str:
         f" WHEN {us} IN ('facebook','facebook.page','fb','ig','instagram','linkedin','linkedin.company','twitter')"
         f"   OR {um} IN ('social','social-media') THEN 'Social Media'"
         f" WHEN {um} IN ('referral','referral_profile')"
-        f"   OR {us} IN ('cloudtango','clutch.co','themanifest.com','mspdatabase.com','chatgpt.com','local-listings')"
+        f"   OR {us} IN ('cloudtango','clutch.co','themanifest.com','mspdatabase.com','local-listings')"
         f"   THEN 'Referral'"
         f" WHEN {um} = 'direct' OR {us} IN ('offline','direct','website') THEN 'Offline Marketing'"
         f" WHEN {um} = 'email' OR {us} IN ('email','email-signature') THEN 'Email'"
@@ -809,6 +832,116 @@ def load_monthly_qualified_by_type(date_from: str, date_to: str, tags: list[str]
     months = sorted(set(call_map) | set(form_map))
     return [{"month": m, "call_cnt": call_map.get(m, 0), "form_cnt": form_map.get(m, 0)}
             for m in months]
+
+
+def load_ai_leads_monthly(date_from: str, date_to: str, pipeline_tags: list[str]) -> list[dict]:
+    """
+    Monthly AI Search contact counts with qualified breakdown.
+    Returns list of {month, total, qualified}.
+    """
+    ai_c = _ai_filter("c")
+    ai_f = _ai_filter("f")
+    ph   = ",".join("?" * len(pipeline_tags)) if pipeline_tags else "''"
+    with get_conn() as conn:
+        call_total = conn.execute(
+            f"""SELECT substr(c.start_time,1,7) AS month, COUNT(*) AS n
+                FROM calls c WHERE c.start_time BETWEEN ? AND ? AND {ai_c}
+                GROUP BY month""",
+            (date_from, date_to + "T23:59:59"),
+        ).fetchall()
+        call_qual = conn.execute(
+            f"""SELECT substr(c.start_time,1,7) AS month, COUNT(DISTINCT c.id) AS n
+                FROM calls c JOIN call_tags ct ON ct.call_id = c.id
+                WHERE c.start_time BETWEEN ? AND ? AND {ai_c}
+                {"AND ct.tag IN (" + ph + ")" if pipeline_tags else ""}
+                GROUP BY month""",
+            [date_from, date_to + "T23:59:59"] + (pipeline_tags if pipeline_tags else []),
+        ).fetchall()
+        form_total = conn.execute(
+            f"""SELECT substr(f.submitted_at,1,7) AS month, COUNT(*) AS n
+                FROM form_submissions f WHERE f.submitted_at BETWEEN ? AND ? AND {ai_f}
+                GROUP BY month""",
+            (date_from, date_to + "T23:59:59"),
+        ).fetchall()
+        form_qual = conn.execute(
+            f"""SELECT substr(f.submitted_at,1,7) AS month, COUNT(DISTINCT f.id) AS n
+                FROM form_submissions f JOIN form_tags ft ON ft.form_id = f.id
+                WHERE f.submitted_at BETWEEN ? AND ? AND {ai_f}
+                {"AND ft.tag IN (" + ph + ")" if pipeline_tags else ""}
+                GROUP BY month""",
+            [date_from, date_to + "T23:59:59"] + (pipeline_tags if pipeline_tags else []),
+        ).fetchall()
+
+    from collections import defaultdict
+    total_map = defaultdict(int)
+    qual_map  = defaultdict(int)
+    for r in call_total + form_total:
+        total_map[r["month"]] += r["n"]
+    for r in call_qual + form_qual:
+        qual_map[r["month"]] += r["n"]
+    months = sorted(set(total_map) | set(qual_map))
+    return [{"month": m, "total": total_map[m], "qualified": qual_map[m]} for m in months]
+
+
+def load_ai_leads_by_platform(date_from: str, date_to: str) -> list[dict]:
+    """
+    AI Search contact breakdown by specific platform (utm_source / referrer_domain).
+    Returns list of {platform, count} sorted descending.
+    """
+    ai_c = _ai_filter("c")
+    with get_conn() as conn:
+        rows = conn.execute(
+            f"""SELECT
+                    CASE
+                      WHEN LOWER(COALESCE(c.utm_source,'')) IN ('chatgpt.com','chatgpt')
+                        OR LOWER(COALESCE(c.referrer_domain,'')) LIKE '%chatgpt.com%' THEN 'ChatGPT'
+                      WHEN LOWER(COALESCE(c.utm_source,'')) IN ('searchgpt')
+                        OR LOWER(COALESCE(c.referrer_domain,'')) LIKE '%searchgpt%' THEN 'SearchGPT'
+                      WHEN LOWER(COALESCE(c.utm_source,'')) = 'perplexity'
+                        OR LOWER(COALESCE(c.referrer_domain,'')) LIKE '%perplexity.ai%' THEN 'Perplexity'
+                      WHEN LOWER(COALESCE(c.utm_source,'')) = 'gemini'
+                        OR LOWER(COALESCE(c.referrer_domain,'')) LIKE '%gemini.google%' THEN 'Gemini'
+                      WHEN LOWER(COALESCE(c.utm_source,'')) = 'copilot'
+                        OR LOWER(COALESCE(c.referrer_domain,'')) LIKE '%copilot.microsoft%' THEN 'Copilot'
+                      ELSE 'Other AI'
+                    END AS platform,
+                    COUNT(*) AS n
+                FROM calls c
+                WHERE c.start_time BETWEEN ? AND ? AND {ai_c}
+                GROUP BY platform ORDER BY n DESC""",
+            (date_from, date_to + "T23:59:59"),
+        ).fetchall()
+    return [{"platform": r["platform"], "count": r["n"]} for r in rows]
+
+
+def load_ai_leads_by_company(date_from: str, date_to: str, pipeline_tags: list[str]) -> list[dict]:
+    """
+    Per-company AI Search lead totals with qualified count.
+    Returns list of {company, total, qualified} sorted by total desc.
+    """
+    ai_c = _ai_filter("c")
+    ph   = ",".join("?" * len(pipeline_tags)) if pipeline_tags else "''"
+    with get_conn() as conn:
+        total_rows = conn.execute(
+            f"""SELECT co.name AS company, COUNT(*) AS n
+                FROM calls c JOIN companies co ON co.id = c.company_id
+                WHERE c.start_time BETWEEN ? AND ? AND {ai_c}
+                GROUP BY co.name ORDER BY n DESC""",
+            (date_from, date_to + "T23:59:59"),
+        ).fetchall()
+        qual_rows = conn.execute(
+            f"""SELECT co.name AS company, COUNT(DISTINCT c.id) AS n
+                FROM calls c
+                JOIN companies co ON co.id = c.company_id
+                JOIN call_tags ct ON ct.call_id = c.id
+                WHERE c.start_time BETWEEN ? AND ? AND {ai_c}
+                {"AND ct.tag IN (" + ph + ")" if pipeline_tags else ""}
+                GROUP BY co.name""",
+            [date_from, date_to + "T23:59:59"] + (pipeline_tags if pipeline_tags else []),
+        ).fetchall()
+    qual_map = {r["company"]: r["n"] for r in qual_rows}
+    return [{"company": r["company"], "total": r["n"], "qualified": qual_map.get(r["company"], 0)}
+            for r in total_rows]
 
 
 def load_call_duration_by_month(date_from: str, date_to: str, pipeline_tags: list[str]) -> list[dict]:
