@@ -431,7 +431,7 @@ def load_monthly_by_tag(date_from: str, date_to: str, tags: list[str]) -> list[d
 #   utm_source=bing                            → "Bing"
 #   utm_source facebook / medium social        → "Social Media"
 #   utm_medium=referral or known referral sites→ "Referral"
-#   utm_medium=direct / offline (non-GMB)      → "Direct"
+#   utm_medium=direct / offline (non-GMB)      → "Offline Marketing"
 #   anything else                              → NULL (excluded from charts)
 
 def _src(tbl: str) -> str:
