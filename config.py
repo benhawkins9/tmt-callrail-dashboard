@@ -35,6 +35,7 @@ CLIENT_WHITELIST = [
     "LastTech",
     "Integrita Systems",
     "Integral Networks, Inc",
+    "Integrated Business Systems",
     "GDS Technology",
     "Creative IT",
     "Converging Networks Group, Inc",
