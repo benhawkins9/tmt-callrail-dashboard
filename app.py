@@ -557,7 +557,7 @@ else:
 
 st.markdown("---")
 
-# ── Secondary: Tag breakdown stacked bar ──────────────────────────────────────
+# ── Secondary: Tag breakdown + Total Contacts ─────────────────────────────────
 
 col_left, col_right = st.columns(2)
 
@@ -582,7 +582,6 @@ with col_left:
             ))
         fig_tags.update_layout(
             barmode="stack",
-            title="Tag Breakdown by Month",
             xaxis_title="Month",
             yaxis_title="Count",
             **{k: v for k, v in PLOT_LAYOUT.items() if k not in ("xaxis", "yaxis", "height")},
