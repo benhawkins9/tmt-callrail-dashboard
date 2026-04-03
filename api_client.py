@@ -22,6 +22,8 @@ Rate limit: 20 requests/second → we use 0.06s gap between requests.
 Pagination: response includes { "page", "per_page", "total_records", "data": [...] }
 """
 
+from __future__ import annotations
+
 import os
 import time
 import logging

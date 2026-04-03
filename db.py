@@ -10,6 +10,8 @@ call_tags        — many-to-many: call_id → tag name
 form_tags        — many-to-many: form_id → tag name
 """
 
+from __future__ import annotations
+
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
