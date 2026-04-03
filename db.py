@@ -781,6 +781,36 @@ def load_conversion_quality_by_month(date_from: str, date_to: str, pipeline_tags
     return result
 
 
+def load_monthly_qualified_by_type(date_from: str, date_to: str, tags: list[str]) -> list[dict]:
+    """
+    Monthly qualified lead count split by contact type (call vs form).
+    Returns list of {month, call_cnt, form_cnt}.
+    """
+    if not tags:
+        return []
+    ph = ",".join("?" * len(tags))
+    with get_conn() as conn:
+        call_rows = conn.execute(
+            f"""SELECT substr(c.start_time,1,7) AS month, COUNT(DISTINCT c.id) AS cnt
+                FROM calls c JOIN call_tags ct ON ct.call_id = c.id
+                WHERE c.start_time BETWEEN ? AND ? AND ct.tag IN ({ph})
+                GROUP BY month""",
+            [date_from, date_to + "T23:59:59"] + tags,
+        ).fetchall()
+        form_rows = conn.execute(
+            f"""SELECT substr(f.submitted_at,1,7) AS month, COUNT(DISTINCT f.id) AS cnt
+                FROM form_submissions f JOIN form_tags ft ON ft.form_id = f.id
+                WHERE f.submitted_at BETWEEN ? AND ? AND ft.tag IN ({ph})
+                GROUP BY month""",
+            [date_from, date_to + "T23:59:59"] + tags,
+        ).fetchall()
+    call_map = {r["month"]: r["cnt"] for r in call_rows}
+    form_map = {r["month"]: r["cnt"] for r in form_rows}
+    months = sorted(set(call_map) | set(form_map))
+    return [{"month": m, "call_cnt": call_map.get(m, 0), "form_cnt": form_map.get(m, 0)}
+            for m in months]
+
+
 def load_call_duration_by_month(date_from: str, date_to: str, pipeline_tags: list[str]) -> list[dict]:
     """
     Average call duration (seconds) per month split by:

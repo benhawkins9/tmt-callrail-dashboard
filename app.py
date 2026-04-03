@@ -22,6 +22,7 @@ from db import (
     load_duration_scorecard,
     load_conversion_quality_totals,
     load_conversion_quality_by_month,
+    load_monthly_qualified_by_type,
 )
 from config import DATE_FROM
 
@@ -212,6 +213,10 @@ def _all_tags():
 
 
 @st.cache_data(show_spinner=False)
+def _monthly_qualified_by_type(date_from, date_to, tags_tuple):
+    return load_monthly_qualified_by_type(date_from, date_to, list(tags_tuple))
+
+@st.cache_data(show_spinner=False)
 def _conversion_quality_totals(date_from, date_to, pipeline_tags_tuple):
     return load_conversion_quality_totals(date_from, date_to, list(pipeline_tags_tuple))
 
@@ -235,6 +240,7 @@ def clear_cache():
     _source_breakdown.clear()
     _scorecard.clear()
     _all_tags.clear()
+    _monthly_qualified_by_type.clear()
     _conversion_quality_totals.clear()
     _conversion_quality_by_month.clear()
     _duration_by_month.clear()
@@ -650,37 +656,44 @@ with col_right:
 
 st.markdown("---")
 
-# ── Call volume vs Form volume split ──────────────────────────────────────────
+# ── Qualified Leads by Month — Calls vs Forms ─────────────────────────────────
 
-st.markdown("## Call vs Form Volume by Month")
+st.markdown("## Qualified Leads by Month — Calls vs Forms")
 
-if contact_rows:
+_qbt_tags = pipeline_tags_tuple if pipeline_tags_tuple else tuple(sorted(PIPELINE_TAGS))
+_qbt_rows = _monthly_qualified_by_type(DATE_FROM, TODAY, _qbt_tags)
+
+if _qbt_rows:
+    _df_qbt = pd.DataFrame(_qbt_rows)
     fig_split = go.Figure()
     fig_split.add_trace(go.Bar(
-        name="Calls",
-        x=pivot_ct.index.tolist(),
-        y=pivot_ct["call"],
+        name="Qualified Calls",
+        x=_df_qbt["month"],
+        y=_df_qbt["call_cnt"],
         marker_color=GREEN,
-        hovertemplate="Calls: %{y}<extra></extra>",
+        hovertemplate="Qualified calls: %{y}<extra></extra>",
     ))
     fig_split.add_trace(go.Bar(
-        name="Forms",
-        x=pivot_ct.index.tolist(),
-        y=pivot_ct["form"],
+        name="Qualified Forms",
+        x=_df_qbt["month"],
+        y=_df_qbt["form_cnt"],
         marker_color=TEAL,
-        hovertemplate="Forms: %{y}<extra></extra>",
+        hovertemplate="Qualified forms: %{y}<extra></extra>",
     ))
     fig_split.update_layout(
-        barmode="stack",
-        title="Call Volume vs Form Volume",
+        barmode="group",
         xaxis_title="Month",
-        yaxis_title="Count",
-        **{k: v for k, v in PLOT_LAYOUT.items() if k not in ("xaxis", "yaxis", "height")},
+        yaxis_title="Qualified Leads",
+        **{k: v for k, v in PLOT_LAYOUT.items() if k not in ("xaxis", "yaxis", "height", "legend")},
         xaxis=dict(gridcolor="#334155", linecolor="#475569", tickfont=dict(color="#94a3b8")),
         yaxis=dict(gridcolor="#334155", linecolor="#475569", tickfont=dict(color="#94a3b8")),
         height=360,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0,
+                    bgcolor="rgba(0,0,0,0)", font=dict(color="#f1f5f9")),
     )
     st.plotly_chart(fig_split, use_container_width=True)
+else:
+    st.info("No qualified lead data. Sync data first.")
 
 st.markdown("---")
 
