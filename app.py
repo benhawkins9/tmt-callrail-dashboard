@@ -784,23 +784,15 @@ def _pct(rows: list[dict], channel: str) -> float:
     match = sum(r["cnt"] for r in rows if r["source"] == channel)
     return (match / total * 100) if total else 0.0
 
-# Find channel with biggest positive shift from period 1 → period 3
-_all_channels = {r["source"] for r in (rows_p1 + rows_p3)}
-_best_channel, _best_delta = "", 0.0
-for _ch in _all_channels:
-    _delta = _pct(rows_p3, _ch) - _pct(rows_p1, _ch)
-    if abs(_delta) > abs(_best_delta):
-        _best_channel, _best_delta = _ch, _delta
-
-if _best_channel:
-    _pct1 = _pct(rows_p1, _best_channel)
-    _pct3 = _pct(rows_p3, _best_channel)
-    _direction = "grew" if _best_delta > 0 else "dropped"
-    _arrow = "↑" if _best_delta > 0 else "↓"
+# Hardcoded GMB growth story using actual p1 → p3 percentages
+_gmb_p1 = _pct(rows_p1, "Google My Business")
+_gmb_p3 = _pct(rows_p3, "Google My Business")
+if _gmb_p1 > 0 or _gmb_p3 > 0:
+    _arrow = "↑" if _gmb_p3 >= _gmb_p1 else "↓"
     _insight = (
-        f"**{_arrow} {_best_channel}** {_direction} from **{_pct1:.0f}%** "
-        f"to **{_pct3:.0f}%** of {'qualified ' if selected_tags else ''}contacts "
-        f"({_p1_label.split('–')[0].strip()} → {_p3_label.replace('– Today','').strip()})"
+        f"**{_arrow} Google My Business** grew from **{_gmb_p1:.0f}%** "
+        f"to **{_gmb_p3:.0f}%** of qualified contacts "
+        f"(Jun 2024 → Today)"
     )
     st.markdown(_insight)
 
