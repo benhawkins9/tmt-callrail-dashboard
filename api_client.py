@@ -136,11 +136,13 @@ def get_form_submissions(account_id: str, company_id: str, date_from: str, date_
     Fetch all form submissions for a company within the date range.
     """
     url = f"{BASE_URL}/a/{account_id}/form_submissions.json"
+    # form_submissions does NOT support source_name or referrer_domain as fields
+    # (API returns 400). Valid extra fields: tags, utm_source, utm_medium, utm_campaign
     params = {
         "company_id": company_id,
         "start_date": date_from,
         "end_date":   date_to,
-        "fields":     "tags,source_name,referrer_domain,utm_source,utm_medium",
+        "fields":     "tags,utm_source,utm_medium,utm_campaign",
         "per_page":   250,
         "page":       1,
     }

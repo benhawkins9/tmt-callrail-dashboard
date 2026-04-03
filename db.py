@@ -203,10 +203,12 @@ def upsert_forms(forms: list[dict]):
                     "submitted_at":   f.get("submitted_at") or "",
                     "source":         f.get("source") or "",
                     "source_type":    f.get("source_type") or "",
-                    "source_name":    f.get("source_name") or "",
+                    "source_name":    "",  # not a valid field on form_submissions API
+                    # `medium` is the default form field; `utm_medium` is the same value
+                    # returned when requested explicitly — fall back to whichever is present
                     "utm_source":     f.get("utm_source") or "",
-                    "utm_medium":     f.get("utm_medium") or "",
-                    "referrer_domain": f.get("referrer_domain") or "",
+                    "utm_medium":     f.get("utm_medium") or f.get("medium") or "",
+                    "referrer_domain": "",  # not a valid field on form_submissions API
                     "form_name":      f.get("form_name") or f.get("name") or "",
                     "landing_page":   f.get("landing_page_url") or "",
                 }
@@ -674,6 +676,107 @@ def load_all_tags() -> list[str]:
         form_tags = conn.execute("SELECT DISTINCT tag FROM form_tags ORDER BY tag").fetchall()
     tags = sorted({r["tag"] for r in call_tags} | {r["tag"] for r in form_tags})
     return tags
+
+
+def load_conversion_quality_totals(date_from: str, date_to: str, pipeline_tags: list[str]) -> dict:
+    """
+    Overall qualified rate for calls vs forms over the full date range.
+    Returns {calls_qualified, calls_total, calls_rate,
+             forms_qualified, forms_total, forms_rate}
+    """
+    if not pipeline_tags:
+        return {"calls_qualified": 0, "calls_total": 0, "calls_rate": 0.0,
+                "forms_qualified": 0, "forms_total": 0, "forms_rate": 0.0}
+    ph = ",".join("?" * len(pipeline_tags))
+    with get_conn() as conn:
+        calls_total = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM calls WHERE start_time BETWEEN ? AND ?",
+            (date_from, date_to + "T23:59:59"),
+        ).fetchone()["cnt"]
+        calls_qual = conn.execute(
+            f"""SELECT COUNT(DISTINCT c.id) AS cnt
+                FROM calls c JOIN call_tags ct ON ct.call_id = c.id
+                WHERE c.start_time BETWEEN ? AND ? AND ct.tag IN ({ph})""",
+            [date_from, date_to + "T23:59:59"] + pipeline_tags,
+        ).fetchone()["cnt"]
+        forms_total = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM form_submissions WHERE submitted_at BETWEEN ? AND ?",
+            (date_from, date_to + "T23:59:59"),
+        ).fetchone()["cnt"]
+        forms_qual = conn.execute(
+            f"""SELECT COUNT(DISTINCT f.id) AS cnt
+                FROM form_submissions f JOIN form_tags ft ON ft.form_id = f.id
+                WHERE f.submitted_at BETWEEN ? AND ? AND ft.tag IN ({ph})""",
+            [date_from, date_to + "T23:59:59"] + pipeline_tags,
+        ).fetchone()["cnt"]
+    return {
+        "calls_qualified": calls_qual,
+        "calls_total":     calls_total,
+        "calls_rate":      (calls_qual / calls_total * 100) if calls_total else 0.0,
+        "forms_qualified": forms_qual,
+        "forms_total":     forms_total,
+        "forms_rate":      (forms_qual / forms_total * 100) if forms_total else 0.0,
+    }
+
+
+def load_conversion_quality_by_month(date_from: str, date_to: str, pipeline_tags: list[str]) -> list[dict]:
+    """
+    Monthly qualified rate (%) for calls vs forms separately.
+    Returns list of {month, calls_rate, forms_rate, calls_qualified,
+                     calls_total, forms_qualified, forms_total}.
+    """
+    if not pipeline_tags:
+        return []
+    ph = ",".join("?" * len(pipeline_tags))
+    with get_conn() as conn:
+        calls_total_rows = conn.execute(
+            """SELECT substr(start_time,1,7) AS month, COUNT(*) AS cnt
+               FROM calls WHERE start_time BETWEEN ? AND ?
+               GROUP BY month""",
+            (date_from, date_to + "T23:59:59"),
+        ).fetchall()
+        calls_qual_rows = conn.execute(
+            f"""SELECT substr(c.start_time,1,7) AS month, COUNT(DISTINCT c.id) AS cnt
+                FROM calls c JOIN call_tags ct ON ct.call_id = c.id
+                WHERE c.start_time BETWEEN ? AND ? AND ct.tag IN ({ph})
+                GROUP BY month""",
+            [date_from, date_to + "T23:59:59"] + pipeline_tags,
+        ).fetchall()
+        forms_total_rows = conn.execute(
+            """SELECT substr(submitted_at,1,7) AS month, COUNT(*) AS cnt
+               FROM form_submissions WHERE submitted_at BETWEEN ? AND ?
+               GROUP BY month""",
+            (date_from, date_to + "T23:59:59"),
+        ).fetchall()
+        forms_qual_rows = conn.execute(
+            f"""SELECT substr(f.submitted_at,1,7) AS month, COUNT(DISTINCT f.id) AS cnt
+                FROM form_submissions f JOIN form_tags ft ON ft.form_id = f.id
+                WHERE f.submitted_at BETWEEN ? AND ? AND ft.tag IN ({ph})
+                GROUP BY month""",
+            [date_from, date_to + "T23:59:59"] + pipeline_tags,
+        ).fetchall()
+
+    ct_map  = {r["month"]: r["cnt"] for r in calls_total_rows}
+    cq_map  = {r["month"]: r["cnt"] for r in calls_qual_rows}
+    ft_map  = {r["month"]: r["cnt"] for r in forms_total_rows}
+    fq_map  = {r["month"]: r["cnt"] for r in forms_qual_rows}
+    months  = sorted(set(ct_map) | set(ft_map))
+    result  = []
+    for m in months:
+        ct = ct_map.get(m, 0)
+        cq = cq_map.get(m, 0)
+        ft = ft_map.get(m, 0)
+        fq = fq_map.get(m, 0)
+        result.append({
+            "month":           m,
+            "calls_qualified": cq,
+            "calls_total":     ct,
+            "calls_rate":      round(cq / ct * 100, 2) if ct else 0.0,
+            "forms_qualified": fq,
+            "forms_total":     ft,
+            "forms_rate":      round(fq / ft * 100, 2) if ft else 0.0,
+        })
+    return result
 
 
 def load_call_duration_by_month(date_from: str, date_to: str, pipeline_tags: list[str]) -> list[dict]:

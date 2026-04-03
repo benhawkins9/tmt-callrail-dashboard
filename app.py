@@ -20,6 +20,8 @@ from db import (
     load_all_tags,
     load_call_duration_by_month,
     load_duration_scorecard,
+    load_conversion_quality_totals,
+    load_conversion_quality_by_month,
 )
 from config import DATE_FROM
 
@@ -186,6 +188,14 @@ def _all_tags():
 
 
 @st.cache_data(show_spinner=False)
+def _conversion_quality_totals(date_from, date_to, pipeline_tags_tuple):
+    return load_conversion_quality_totals(date_from, date_to, list(pipeline_tags_tuple))
+
+@st.cache_data(show_spinner=False)
+def _conversion_quality_by_month(date_from, date_to, pipeline_tags_tuple):
+    return load_conversion_quality_by_month(date_from, date_to, list(pipeline_tags_tuple))
+
+@st.cache_data(show_spinner=False)
 def _duration_by_month(date_from, date_to, pipeline_tags_tuple):
     return load_call_duration_by_month(date_from, date_to, list(pipeline_tags_tuple))
 
@@ -201,6 +211,8 @@ def clear_cache():
     _source_breakdown.clear()
     _scorecard.clear()
     _all_tags.clear()
+    _conversion_quality_totals.clear()
+    _conversion_quality_by_month.clear()
     _duration_by_month.clear()
     _duration_scorecard.clear()
 
@@ -768,6 +780,112 @@ if _best_channel:
     st.markdown(_insight)
 
 st.caption("*Unknown sources excluded. Contacts with no source attribution are not shown.*")
+
+st.markdown("---")
+
+# ── Call vs Form Conversion Quality ──────────────────────────────────────────
+
+st.markdown("### Which Converts Better — Calls or Forms?")
+
+_cq_tags = pipeline_tags_tuple if pipeline_tags_tuple else tuple(sorted(PIPELINE_TAGS))
+
+_cq_totals = _conversion_quality_totals(DATE_FROM, TODAY, _cq_tags)
+_calls_rate  = _cq_totals.get("calls_rate",  0.0)
+_forms_rate  = _cq_totals.get("forms_rate",  0.0)
+_calls_qual  = _cq_totals.get("calls_qualified", 0)
+_calls_total = _cq_totals.get("calls_total",     0)
+_forms_qual  = _cq_totals.get("forms_qualified", 0)
+_forms_total = _cq_totals.get("forms_total",     0)
+
+if _calls_total > 0 or _forms_total > 0:
+    # Callout line
+    if _calls_rate > 0 and _forms_rate > 0:
+        _better = "Calls" if _calls_rate >= _forms_rate else "Forms"
+        _worse  = "Forms" if _better == "Calls" else "Calls"
+        _better_rate = _calls_rate if _better == "Calls" else _forms_rate
+        _worse_rate  = _forms_rate if _better == "Calls" else _calls_rate
+        _callout = (
+            f"**{_better}** convert at **{_better_rate:.1f}%** vs "
+            f"**{_worse_rate:.1f}%** for {_worse.lower()} — "
+            f"{'calls are' if _better == 'Calls' else 'forms are'} "
+            f"**{(_better_rate / _worse_rate):.1f}x more likely** to produce a qualified lead"
+        )
+    elif _calls_rate > 0:
+        _callout = f"Calls convert at **{_calls_rate:.1f}%** (no qualified form data yet)"
+    else:
+        _callout = f"Forms convert at **{_forms_rate:.1f}%** (no qualified call data yet)"
+
+    st.markdown(_callout)
+
+    # Scorecard row
+    _cq1, _cq2, _cq3 = st.columns(3)
+    with _cq1:
+        st.metric(
+            label="Call Conversion Rate",
+            value=f"{_calls_rate:.1f}%",
+            help=f"{_calls_qual:,} qualified out of {_calls_total:,} total calls",
+        )
+    with _cq2:
+        st.metric(
+            label="Form Conversion Rate",
+            value=f"{_forms_rate:.1f}%",
+            help=f"{_forms_qual:,} qualified out of {_forms_total:,} total forms",
+        )
+    with _cq3:
+        _gap = _calls_rate - _forms_rate
+        _gap_sign = "+" if _gap >= 0 else ""
+        st.metric(
+            label="Calls vs Forms Gap",
+            value=f"{_gap_sign}{_gap:.1f}pp",
+            help="Positive = calls convert better; negative = forms convert better",
+        )
+
+    # Monthly trend line chart
+    _cq_monthly = _conversion_quality_by_month(DATE_FROM, TODAY, _cq_tags)
+    if _cq_monthly:
+        _df_cq = pd.DataFrame(_cq_monthly)
+        # Only show months where we have at least some volume
+        _df_cq = _df_cq[(_df_cq["calls_total"] > 0) | (_df_cq["forms_total"] > 0)]
+
+        fig_cq = go.Figure()
+        fig_cq.add_trace(go.Scatter(
+            name="Call Conversion Rate",
+            x=_df_cq["month"],
+            y=_df_cq["calls_rate"],
+            mode="lines+markers",
+            line=dict(color=GREEN, width=3),
+            marker=dict(size=7, color=GREEN),
+            hovertemplate="Calls: %{y:.1f}%<extra></extra>",
+        ))
+        fig_cq.add_trace(go.Scatter(
+            name="Form Conversion Rate",
+            x=_df_cq["month"],
+            y=_df_cq["forms_rate"],
+            mode="lines+markers",
+            line=dict(color=BLUE, width=3, dash="dot"),
+            marker=dict(size=7, color=BLUE),
+            hovertemplate="Forms: %{y:.1f}%<extra></extra>",
+        ))
+        fig_cq.update_layout(
+            title="Monthly Qualified Rate — Calls vs Forms",
+            xaxis_title="Month",
+            yaxis=dict(
+                title="Qualified Rate (%)",
+                ticksuffix="%",
+                gridcolor="#334155",
+                linecolor="#475569",
+                tickfont=dict(color="#94a3b8"),
+                rangemode="tozero",
+            ),
+            **{k: v for k, v in PLOT_LAYOUT.items() if k not in ("xaxis", "yaxis", "height", "legend")},
+            xaxis=dict(gridcolor="#334155", linecolor="#475569", tickfont=dict(color="#94a3b8")),
+            height=360,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0,
+                        bgcolor="rgba(0,0,0,0)", font=dict(color="#f1f5f9")),
+        )
+        st.plotly_chart(fig_cq, use_container_width=True)
+else:
+    st.info("No contact data yet. Sync data first.")
 
 st.markdown("---")
 
