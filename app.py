@@ -92,6 +92,20 @@ TAG_COLORS = {
 
 SOURCE_COLORS = [GREEN, BLUE, ORANGE, PURPLE, TEAL, YELLOW, PINK, "#f43f5e", "#06b6d4", "#d97706"]
 
+# Fixed color per source — keeps donuts comparable across time periods
+SOURCE_COLOR_MAP = {
+    "Website (Direct)":   GREEN,       # #22c55e
+    "Google My Business": BLUE,        # #3b82f6
+    "Google Ads":         PURPLE,      # #a855f7
+    "Referral":           ORANGE,      # #f97316
+    "Bing":               YELLOW,      # #eab308
+    "Google Organic":     TEAL,        # #14b8a6
+    "Offline Marketing":  "#f43f5e",   # rose — offline tracking numbers, print, SDR
+    "Social Media":       PINK,        # #ec4899
+    "Email":              LIGHT_GREEN, # #86efac
+    "Other":              "#6b7280",   # gray
+}
+
 # ── Page config ────────────────────────────────────────────────────────────────
 
 st.set_page_config(
@@ -692,7 +706,7 @@ _src_tags = selected_tags_tuple if selected_tags else ()
 
 
 def _make_donut(rows: list[dict], title: str) -> go.Figure:
-    """Build a single donut chart from source rows."""
+    """Build a single donut chart from source rows, pinning each source to a fixed color."""
     if not rows:
         return None
     df = pd.DataFrame(rows).sort_values("cnt", ascending=False)
@@ -701,11 +715,13 @@ def _make_donut(rows: list[dict], title: str) -> go.Figure:
     rest = df.iloc[TOP_N:]["cnt"].sum()
     if rest > 0:
         top = pd.concat([top, pd.DataFrame([{"source": "Other", "cnt": rest}])], ignore_index=True)
+    # Look up each slice's color by name so colors are consistent across periods
+    colors = [SOURCE_COLOR_MAP.get(s, "#6b7280") for s in top["source"]]
     fig = go.Figure(go.Pie(
         labels=top["source"],
         values=top["cnt"],
         hole=0.42,
-        marker=dict(colors=SOURCE_COLORS[:len(top)]),
+        marker=dict(colors=colors),
         textinfo="percent",
         textfont=dict(color="#f1f5f9", size=10),
         hovertemplate="%{label}: %{value:,} (%{percent})<extra></extra>",

@@ -456,7 +456,7 @@ def _src(tbl: str) -> str:
         f" WHEN {um} IN ('referral','referral_profile')"
         f"   OR {us} IN ('cloudtango','clutch.co','themanifest.com','mspdatabase.com','chatgpt.com','local-listings')"
         f"   THEN 'Referral'"
-        f" WHEN {um} = 'direct' OR {us} IN ('offline','direct','website') THEN 'Direct'"
+        f" WHEN {um} = 'direct' OR {us} IN ('offline','direct','website') THEN 'Offline Marketing'"
         f" WHEN {um} = 'email' OR {us} IN ('email','email-signature') THEN 'Email'"
         f" WHEN {sn} LIKE '%website pool%' OR {sn} LIKE '%offline marketing%' THEN 'Website (Direct)'"
         f" ELSE NULL END"
